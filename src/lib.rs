@@ -10,6 +10,10 @@ use walkdir::WalkDir;
 type MyResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Debug, Parser)]
+#[command(name = "grepr")]
+#[command(version = "0.1.0")]
+#[command(about = "Rust grep")]
+#[command(author = "Radish-Miyazaki <y.hidaka.kobe@gmail.com>")]
 pub struct Cli {
     #[arg(value_name = "PATTERN", help = "Search pattern")]
     pattern: Regex,
@@ -106,6 +110,14 @@ fn find_lines<T: BufRead>(
 pub fn run(cli: Cli) -> MyResult<()> {
     let filenames = find_files(&cli.files, cli.recursive);
     let file_count = filenames.len();
+    let print = |filename: &str, val: &str| {
+        if file_count > 1 {
+            print!("{}:{}", filename, val)
+        } else {
+            print!("{}", val)
+        }
+    };
+
 
     for filename in filenames {
         match filename {
@@ -114,22 +126,16 @@ pub fn run(cli: Cli) -> MyResult<()> {
                 match open(&filename) {
                     Err(e) => eprintln!("{}: {}", filename, e),
                     Ok(file) => {
-                        let lines = find_lines(file, &cli.pattern, cli.invert_match)?;
-
-                        if file_count > 1 {
-                            if cli.count {
-                                println!("{}:{}", filename, lines.len());
-                            } else {
-                                for line in lines {
-                                    print!("{}:{}", filename, line);
+                        match find_lines(file, &cli.pattern, cli.invert_match) {
+                            Err(e) => eprintln!("{}: {}", filename, e),
+                            Ok(lines) => {
+                                if cli.count {
+                                    print(&filename, &format!("{}\n", lines.len()));
+                                    continue;
                                 }
-                            }
-                        } else {
-                            if cli.count {
-                                println!("{}", lines.len());
-                            } else {
+
                                 for line in lines {
-                                    print!("{}", line);
+                                    print(&filename, &line);
                                 }
                             }
                         }
