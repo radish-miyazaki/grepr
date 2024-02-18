@@ -211,7 +211,7 @@ fn insensitive_count_multiple() -> TestResult {
 }
 
 #[test]
-fn warn_dir_not_recursive() -> TestResult {
+fn warns_dir_not_recursive() -> TestResult {
     let stdout = "tests/inputs/fox.txt:The quick brown fox jumps over the lazy dog.";
     Command::cargo_bin(PRG)?
         .args(&["fox", INPUTS_DIR, FOX])
@@ -231,7 +231,7 @@ fn stdin() -> TestResult {
         .arg("The")
         .write_stdin(input)
         .assert()
-        .stderr(expected);
+        .stdout(expected);
 
     Ok(())
 }
