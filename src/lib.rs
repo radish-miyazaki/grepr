@@ -1,4 +1,7 @@
 use std::fs;
+use std::fs::File;
+use std::io::{BufRead, BufReader, stdin};
+use std::mem;
 
 use clap::Parser;
 use regex::{Regex, RegexBuilder};
@@ -46,7 +49,7 @@ fn find_files(paths: &[String], recursive: bool) -> Vec<MyResult<String>> {
 
                     if !recursive && metadata.is_dir() {
                         results.push(Err(format!("{} is a directory", path).into()));
-                        break;
+                        continue;
                     }
 
                     for entry in WalkDir::new(path)
@@ -68,17 +71,86 @@ fn find_files(paths: &[String], recursive: bool) -> Vec<MyResult<String>> {
     results
 }
 
+fn open(filename: &str) -> MyResult<Box<dyn BufRead>> {
+    match filename {
+        "-" => Ok(Box::new(BufReader::new(stdin()))),
+        _ => Ok(Box::new(BufReader::new(File::open(filename)?))),
+    }
+}
+
+fn find_lines<T: BufRead>(
+    mut file: T,
+    pattern: &Regex,
+    invert_match: bool,
+) -> MyResult<Vec<String>>
+{
+    let mut result: Vec<String> = vec![];
+
+    let mut line = String::new();
+    loop {
+        let bytes = file.read_line(&mut line)?;
+        if bytes == 0 {
+            break;
+        }
+
+        if invert_match ^ pattern.is_match(&line) {
+            result.push(mem::take(&mut line));
+        }
+
+        line.clear();
+    }
+
+    Ok(result)
+}
+
 pub fn run(cli: Cli) -> MyResult<()> {
-    println!("{:#?}", cli);
+    let filenames = find_files(&cli.files, cli.recursive);
+    let file_count = filenames.len();
+
+    for filename in filenames {
+        match filename {
+            Err(e) => eprintln!("{}", e),
+            Ok(filename) => {
+                match open(&filename) {
+                    Err(e) => eprintln!("{}: {}", filename, e),
+                    Ok(file) => {
+                        let lines = find_lines(file, &cli.pattern, cli.invert_match)?;
+
+                        if file_count > 1 {
+                            if cli.count {
+                                println!("{}:{}", filename, lines.len());
+                            } else {
+                                for line in lines {
+                                    print!("{}:{}", filename, line);
+                                }
+                            }
+                        } else {
+                            if cli.count {
+                                println!("{}", lines.len());
+                            } else {
+                                for line in lines {
+                                    print!("{}", line);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use rand::distributions::Alphanumeric;
     use rand::Rng;
+    use regex::{Regex, RegexBuilder};
 
-    use super::find_files;
+    use super::{find_files, find_lines};
 
     #[test]
     fn test_find_files() {
@@ -117,5 +189,36 @@ mod tests {
         let files = find_files(&[bad], false);
         assert_eq!(files.len(), 1);
         assert!(files[0].is_err());
+    }
+
+    #[test]
+    fn test_find_lines() {
+        let text = b"Lorem\nIpsum\r\nDOLOR";
+
+        // or というパターンは、Lorem という1行にマッチする
+        let re1 = Regex::new("or").unwrap();
+        let matches = find_lines(Cursor::new(&text), &re1, false);
+        assert!(matches.is_ok());
+        assert_eq!(matches.unwrap().len(), 1);
+
+        // マッチを反転させた場合、残りの2行にマッチする
+        let matches = find_lines(Cursor::new(&text), &re1, true);
+        assert!(matches.is_ok());
+        assert_eq!(matches.unwrap().len(), 2);
+
+        let re2 = RegexBuilder::new("or")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+
+        // 大文字と小文字を区別しないので、Lorem と DOLOR の2行にマッチする
+        let matches = find_lines(Cursor::new(&text), &re2, false);
+        assert!(matches.is_ok());
+        assert_eq!(matches.unwrap().len(), 2);
+
+        // マッチを反転させた場合、残りの1行にマッチする
+        let matches = find_lines(Cursor::new(&text), &re2, true);
+        assert!(matches.is_ok());
+        assert_eq!(matches.unwrap().len(), 1);
     }
 }
